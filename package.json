@@ -1,0 +1,37 @@
+{
+  "name": "docstruct",
+  "version": "0.1.0",
+  "description": "Offline, rule-based document parser for AI pipelines",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "keywords": [
+    "document",
+    "parser",
+    "pdf",
+    "ocr",
+    "structured-data",
+    "ai",
+    "preprocessing"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
+  }
+}
