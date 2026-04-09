@@ -179,14 +179,16 @@ function tryHeaderAnchored(
 ): { tableRows: string[][]; tableElements: TextElement[] } | null {
   if (elements.length < HEADER_MIN_COLUMNS * 2) return null
 
-  const yTolerance = 0.02
+  // Use tight y-tolerance for grouping to avoid merging header with first data row
+  const yGroupTolerance = 0.01
+  const yRowTolerance = 0.02
 
-  // Group elements by y-value
+  // Group elements by y-value (tight tolerance)
   const byY = new Map<number, TextElement[]>()
   for (const el of elements) {
     let foundY = false
     for (const [groupY, group] of byY) {
-      if (Math.abs(el.y - groupY) < yTolerance) {
+      if (Math.abs(el.y - groupY) < yGroupTolerance) {
         group.push(el)
         foundY = true
         break
@@ -197,11 +199,14 @@ function tryHeaderAnchored(
     }
   }
 
-  // Find header row: first y-group with >= 4 distinct x-positions and wide spread
+  // Find header row: scan the first few qualifying y-groups at the top of the page.
+  // The header is typically the first clean row (element count == distinct x count)
+  // with a high column count. We only scan the first 5 qualifying rows to avoid
+  // picking a data row that happens to have more columns than the header.
   const sortedYGroups = [...byY.entries()].sort(([a], [b]) => a - b)
 
-  let headerY = -1
-  let headerElements: TextElement[] = []
+  type Candidate = { y: number; group: TextElement[]; distinctCount: number; clean: boolean }
+  const candidates: Candidate[] = []
 
   for (const [y, group] of sortedYGroups) {
     const xs = group.map((el) => el.x).sort((a, b) => a - b)
@@ -217,9 +222,34 @@ function tryHeaderAnchored(
     const spread = distinctXs[distinctXs.length - 1] - distinctXs[0]
     if (spread < HEADER_MIN_SPREAD) continue
 
-    headerY = y
-    headerElements = group
-    break
+    const clean = group.length === distinctXs.length
+    candidates.push({ y, group, distinctCount: distinctXs.length, clean })
+
+    if (candidates.length >= 5) break
+  }
+
+  // Among the first 5 candidates, pick the first clean one with the highest distinct count
+  let headerY = -1
+  let headerElements: TextElement[] = []
+  let bestDistinct = 0
+
+  for (const c of candidates) {
+    if (c.clean && c.distinctCount > bestDistinct) {
+      bestDistinct = c.distinctCount
+      headerY = c.y
+      headerElements = c.group
+    }
+  }
+
+  // If no clean candidate, try any candidate
+  if (headerY === -1) {
+    for (const c of candidates) {
+      if (c.distinctCount > bestDistinct) {
+        bestDistinct = c.distinctCount
+        headerY = c.y
+        headerElements = c.group
+      }
+    }
   }
 
   if (headerY === -1) return null
@@ -251,16 +281,33 @@ function tryHeaderAnchored(
     return anchors.length - 1
   }
 
-  // Collect data elements (not on header row)
-  const dataElements = elements.filter((el) => Math.abs(el.y - headerY) >= yTolerance)
+  // Collect data elements (below the header row, not on it)
+  const dataElements = elements.filter((el) => el.y > headerY + yGroupTolerance)
   if (dataElements.length === 0) return null
+
+  // Compute adaptive y-tolerance from the data's row spacing
+  // The typical row spacing is the median gap between unique y-values
+  const dataYs = [...new Set(dataElements.map((el) => el.y))].sort((a, b) => a - b)
+  let adaptiveYTolerance = yRowTolerance
+  if (dataYs.length >= 3) {
+    const yGaps: number[] = []
+    for (let i = 1; i < dataYs.length; i++) {
+      yGaps.push(dataYs[i] - dataYs[i - 1])
+    }
+    yGaps.sort((a, b) => a - b)
+    const medianGap = yGaps[Math.floor(yGaps.length / 2)]
+    // Use 40% of median gap as tolerance — separates rows while grouping multi-line cells
+    adaptiveYTolerance = Math.min(yRowTolerance, medianGap * 0.4)
+    // Clamp to a minimum to avoid over-splitting
+    adaptiveYTolerance = Math.max(0.003, adaptiveYTolerance)
+  }
 
   // Group data by y to form rows
   const dataByY = new Map<number, TextElement[]>()
   for (const el of dataElements) {
     let foundY = false
     for (const [groupY, group] of dataByY) {
-      if (Math.abs(el.y - groupY) < yTolerance) {
+      if (Math.abs(el.y - groupY) < adaptiveYTolerance) {
         group.push(el)
         foundY = true
         break
@@ -488,12 +535,28 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
   if (pageResults.length === 0) return { tables, claimed }
 
   // Detect repeated page-header rows and filter them out
+  // Keep the header on the first page (it becomes the columns array),
+  // strip it from subsequent pages to avoid duplicate header rows in data
   const repeatedSignatures = findRepeatedRowSignatures(pageResults)
   if (repeatedSignatures.size > 0) {
-    for (const result of pageResults) {
-      result.tableRows = result.tableRows.filter(
-        (row) => !isPageHeaderRow(row, repeatedSignatures)
-      )
+    for (let i = 0; i < pageResults.length; i++) {
+      if (i === 0) {
+        // Keep the first occurrence of each repeated header on page 0
+        // (it becomes the column labels)
+        const seen = new Set<string>()
+        pageResults[i].tableRows = pageResults[i].tableRows.filter((row) => {
+          const sig = row.join('|||')
+          if (repeatedSignatures.has(sig) && !seen.has(sig)) {
+            seen.add(sig)
+            return true // keep first occurrence
+          }
+          return !isPageHeaderRow(row, repeatedSignatures)
+        })
+      } else {
+        pageResults[i].tableRows = pageResults[i].tableRows.filter(
+          (row) => !isPageHeaderRow(row, repeatedSignatures)
+        )
+      }
     }
   }
 
