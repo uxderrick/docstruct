@@ -103,18 +103,44 @@ function extractTabTables(ir: DocumentIR): { tables: Table[]; claimed: TextEleme
   return { tables, claimed }
 }
 
-// Page header patterns that should be filtered from table data
-const PAGE_HEADER_PATTERNS = [
-  'MOBILE MONEY TRANSACTION HISTORY',
-  'Time Run:',
-  'MSISDN:',
-  'ACCOUNT HOLDER NAME:',
-  'Powered by MTNGH',
-]
+/**
+ * Detect repeated page-header rows across pages.
+ * A row is considered a page header if its exact text signature appears
+ * on more than half of the pages in the document. This is generic —
+ * it works for any PDF with repeated headers, not just specific formats.
+ */
+function findRepeatedRowSignatures(
+  pageResults: { tableRows: string[][] }[]
+): Set<string> {
+  if (pageResults.length < 2) return new Set()
 
-function isPageHeaderRow(rowTexts: string[]): boolean {
-  const joined = rowTexts.join(' ')
-  return PAGE_HEADER_PATTERNS.some((pattern) => joined.includes(pattern))
+  // Count how many pages each row signature appears on
+  const signatureCounts = new Map<string, number>()
+  for (const result of pageResults) {
+    // Use a set to avoid double-counting the same signature on one page
+    const seenOnPage = new Set<string>()
+    for (const row of result.tableRows) {
+      const sig = row.join('|||')
+      if (!seenOnPage.has(sig)) {
+        seenOnPage.add(sig)
+        signatureCounts.set(sig, (signatureCounts.get(sig) ?? 0) + 1)
+      }
+    }
+  }
+
+  // A row appearing on more than half the pages is a repeated header
+  const threshold = Math.ceil(pageResults.length / 2)
+  const repeated = new Set<string>()
+  for (const [sig, count] of signatureCounts) {
+    if (count >= threshold) {
+      repeated.add(sig)
+    }
+  }
+  return repeated
+}
+
+function isPageHeaderRow(rowTexts: string[], repeatedSignatures: Set<string>): boolean {
+  return repeatedSignatures.has(rowTexts.join('|||'))
 }
 
 function computeAdaptiveXTolerance(elements: TextElement[]): number {
@@ -200,7 +226,6 @@ function extractSpatialTablesForPage(
   // Build table rows — collect ALL elements per cell, join with space
   const tableRows: string[][] = []
   const tableElements: TextElement[] = []
-  const headerElements: TextElement[] = []
 
   for (const yGroup of yGroups) {
     const yMin = Math.min(...yGroup)
@@ -220,18 +245,10 @@ function extractSpatialTablesForPage(
     }
 
     if (rowElements.length > 0) {
-      // Filter out page header rows but still claim their elements
-      if (isPageHeaderRow(row)) {
-        headerElements.push(...rowElements)
-      } else {
-        tableRows.push(row)
-        tableElements.push(...rowElements)
-      }
+      tableRows.push(row)
+      tableElements.push(...rowElements)
     }
   }
-
-  // Include header elements in tableElements so they get claimed (not emitted as paragraphs)
-  tableElements.push(...headerElements)
 
   if (tableRows.length < 2) return null
   return { tableRows, tableElements }
@@ -309,6 +326,16 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
   }
 
   if (pageResults.length === 0) return { tables, claimed }
+
+  // Detect repeated page-header rows and filter them out
+  const repeatedSignatures = findRepeatedRowSignatures(pageResults)
+  if (repeatedSignatures.size > 0) {
+    for (const result of pageResults) {
+      result.tableRows = result.tableRows.filter(
+        (row) => !isPageHeaderRow(row, repeatedSignatures)
+      )
+    }
+  }
 
   // Merge consecutive page results with compatible column structures
   let currentTable: { columns: string[]; rows: string[][]; elements: TextElement[] } | null = null
