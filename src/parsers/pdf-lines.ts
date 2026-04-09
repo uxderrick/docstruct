@@ -86,7 +86,7 @@ export function extractLinesFromOps(
   vpWidth: number,
   vpHeight: number,
   page: number,
-  currentLineWidth: number
+  currentLineWidth: number = 1
 ): LineSegment[] {
   const result: LineSegment[] = []
   let pending: LineSegment[] = []
@@ -202,8 +202,8 @@ export function extractLinesFromOps(
       continue
     }
 
-    // Any other op clears pending (path was not rendered)
-    pending = []
+    // Other ops (state-setting like setFillColor, setStrokeColor, etc.)
+    // do NOT clear pending — only path-starting ops replace pending
   }
 
   return result
