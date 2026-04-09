@@ -170,10 +170,145 @@ function computeAdaptiveXTolerance(elements: TextElement[]): number {
   return Math.max(0.005, Math.min(0.03, tolerance))
 }
 
+const HEADER_MIN_COLUMNS = 4
+const HEADER_MIN_SPREAD = 0.3
+const HEADER_X_DISTINCT_TOLERANCE = 0.02
+
+function tryHeaderAnchored(
+  elements: TextElement[]
+): { tableRows: string[][]; tableElements: TextElement[] } | null {
+  if (elements.length < HEADER_MIN_COLUMNS * 2) return null
+
+  const yTolerance = 0.02
+
+  // Group elements by y-value
+  const byY = new Map<number, TextElement[]>()
+  for (const el of elements) {
+    let foundY = false
+    for (const [groupY, group] of byY) {
+      if (Math.abs(el.y - groupY) < yTolerance) {
+        group.push(el)
+        foundY = true
+        break
+      }
+    }
+    if (!foundY) {
+      byY.set(el.y, [el])
+    }
+  }
+
+  // Find header row: first y-group with >= 4 distinct x-positions and wide spread
+  const sortedYGroups = [...byY.entries()].sort(([a], [b]) => a - b)
+
+  let headerY = -1
+  let headerElements: TextElement[] = []
+
+  for (const [y, group] of sortedYGroups) {
+    const xs = group.map((el) => el.x).sort((a, b) => a - b)
+    const distinctXs: number[] = [xs[0]]
+    for (let i = 1; i < xs.length; i++) {
+      if (xs[i] - distinctXs[distinctXs.length - 1] > HEADER_X_DISTINCT_TOLERANCE) {
+        distinctXs.push(xs[i])
+      }
+    }
+
+    if (distinctXs.length < HEADER_MIN_COLUMNS) continue
+
+    const spread = distinctXs[distinctXs.length - 1] - distinctXs[0]
+    if (spread < HEADER_MIN_SPREAD) continue
+
+    headerY = y
+    headerElements = group
+    break
+  }
+
+  if (headerY === -1) return null
+
+  // Build column anchors from header elements
+  headerElements.sort((a, b) => a.x - b.x)
+
+  const anchors: { x: number; label: string }[] = []
+  for (const el of headerElements) {
+    if (anchors.length === 0 || el.x - anchors[anchors.length - 1].x > HEADER_X_DISTINCT_TOLERANCE) {
+      anchors.push({ x: el.x, label: el.text.trim() })
+    } else {
+      anchors[anchors.length - 1].label += ' ' + el.text.trim()
+    }
+  }
+
+  if (anchors.length < HEADER_MIN_COLUMNS) return null
+
+  // Column boundaries are midpoints between adjacent anchors
+  const boundaries: number[] = []
+  for (let i = 0; i < anchors.length - 1; i++) {
+    boundaries.push((anchors[i].x + anchors[i + 1].x) / 2)
+  }
+
+  function getColumnIndex(x: number): number {
+    for (let i = 0; i < boundaries.length; i++) {
+      if (x < boundaries[i]) return i
+    }
+    return anchors.length - 1
+  }
+
+  // Collect data elements (not on header row)
+  const dataElements = elements.filter((el) => Math.abs(el.y - headerY) >= yTolerance)
+  if (dataElements.length === 0) return null
+
+  // Group data by y to form rows
+  const dataByY = new Map<number, TextElement[]>()
+  for (const el of dataElements) {
+    let foundY = false
+    for (const [groupY, group] of dataByY) {
+      if (Math.abs(el.y - groupY) < yTolerance) {
+        group.push(el)
+        foundY = true
+        break
+      }
+    }
+    if (!foundY) {
+      dataByY.set(el.y, [el])
+    }
+  }
+
+  const sortedDataRows = [...dataByY.entries()].sort(([a], [b]) => a - b)
+
+  const columns = anchors.map((a) => a.label)
+  const tableRows: string[][] = [columns]
+  const tableElements: TextElement[] = [...headerElements]
+
+  for (const [, rowElements] of sortedDataRows) {
+    const row: string[] = new Array(anchors.length).fill('')
+
+    const cellGroups = new Map<number, TextElement[]>()
+    for (const el of rowElements) {
+      const colIdx = getColumnIndex(el.x)
+      if (!cellGroups.has(colIdx)) cellGroups.set(colIdx, [])
+      cellGroups.get(colIdx)!.push(el)
+    }
+
+    for (const [colIdx, cellEls] of cellGroups) {
+      cellEls.sort((a, b) => a.x - b.x)
+      row[colIdx] = cellEls.map((el) => el.text.trim()).join(' ')
+    }
+
+    tableRows.push(row)
+    tableElements.push(...rowElements)
+  }
+
+  if (tableRows.length < 3) return null
+
+  return { tableRows, tableElements }
+}
+
 function extractSpatialTablesForPage(
   elements: TextElement[]
 ): { tableRows: string[][]; tableElements: TextElement[] } | null {
   if (elements.length < 4) return null
+
+  // Try header-anchored extraction first (best for dense tables like bank statements)
+  const headerResult = tryHeaderAnchored(elements)
+  if (headerResult) return headerResult
 
   // Compute adaptive x-tolerance based on density of distinct x-positions
   const xTolerance = computeAdaptiveXTolerance(elements)
