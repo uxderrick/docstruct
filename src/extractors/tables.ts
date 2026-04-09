@@ -1,5 +1,6 @@
 import { claimElements, type DocumentIR, type TextElement } from '../ir.js'
 import type { Table } from '../types.js'
+import { extractLatticeTables } from './lattice.js'
 
 const PIPE_ROW_RE = /^\|(.+)\|$/
 const SEPARATOR_RE = /^\|[\s\-:|]+\|$/
@@ -409,9 +410,13 @@ export function extractTables(ir: DocumentIR): Table[] {
   const tab = extractTabTables(ir)
   claimElements(tab.claimed)
 
+  // Try lattice (line-based) for PDFs with drawn borders
+  const lattice = extractLatticeTables(ir)
+  claimElements(lattice.claimed)
+
   // Then spatial for remaining elements
   const spatial = extractSpatialTables(ir)
   claimElements(spatial.claimed)
 
-  return [...pipe.tables, ...tab.tables, ...spatial.tables]
+  return [...pipe.tables, ...tab.tables, ...lattice.tables, ...spatial.tables]
 }

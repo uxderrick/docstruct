@@ -12,11 +12,22 @@ export interface TextElement {
   claimed?: boolean
 }
 
+export interface LineSegment {
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+  lineWidth: number
+  page?: number
+  orientation: 'horizontal' | 'vertical' | 'other'
+}
+
 export interface DocumentIR {
   elements: TextElement[]
   sourceType: string
   pageCount: number
   raw?: string
+  lines?: LineSegment[]
 }
 
 export function createTextElement(
@@ -43,9 +54,10 @@ export function createDocumentIR(
   elements: TextElement[],
   sourceType: string,
   pageCount: number = 1,
-  raw?: string
+  raw?: string,
+  lines?: LineSegment[]
 ): DocumentIR {
-  return { elements, sourceType, pageCount, raw }
+  return { elements, sourceType, pageCount, raw, lines }
 }
 
 export function getUnclaimedElements(ir: DocumentIR): TextElement[] {
