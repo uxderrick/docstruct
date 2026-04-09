@@ -309,6 +309,207 @@ export function assignTextToCells(
   return result
 }
 
+const BORDER_COVERAGE_THRESHOLD = 0.8
+
+/**
+ * Check if a vertical border line exists at x covering >= 80% of [yTop, yBottom].
+ */
+function hasVerticalBorder(x: number, yTop: number, yBottom: number, vLines: LineSegment[]): boolean {
+  const span = yBottom - yTop
+  if (span <= 0) return true
+
+  for (const line of vLines) {
+    if (Math.abs(line.x1 - x) > SNAP_TOLERANCE) continue
+    const lineYMin = Math.min(line.y1, line.y2)
+    const lineYMax = Math.max(line.y1, line.y2)
+    const overlapStart = Math.max(lineYMin, yTop)
+    const overlapEnd = Math.min(lineYMax, yBottom)
+    const overlap = overlapEnd - overlapStart
+    if (overlap / span >= BORDER_COVERAGE_THRESHOLD) return true
+  }
+  return false
+}
+
+/**
+ * Check if a horizontal border line exists at y covering >= 80% of [xLeft, xRight].
+ */
+function hasHorizontalBorder(y: number, xLeft: number, xRight: number, hLines: LineSegment[]): boolean {
+  const span = xRight - xLeft
+  if (span <= 0) return true
+
+  for (const line of hLines) {
+    if (Math.abs(line.y1 - y) > SNAP_TOLERANCE) continue
+    const lineXMin = Math.min(line.x1, line.x2)
+    const lineXMax = Math.max(line.x1, line.x2)
+    const overlapStart = Math.max(lineXMin, xLeft)
+    const overlapEnd = Math.min(lineXMax, xRight)
+    const overlap = overlapEnd - overlapStart
+    if (overlap / span >= BORDER_COVERAGE_THRESHOLD) return true
+  }
+  return false
+}
+
+/**
+ * Detect merged cells by checking for missing internal borders.
+ * When adjacent cells share a boundary without a covering border line, their text is merged.
+ * Returns a new Map with merged text in the leftmost/topmost cell and '' in absorbed cells.
+ */
+export function detectMergedCells(
+  cells: GridCell[],
+  cellText: Map<string, string>,
+  hLines: LineSegment[],
+  vLines: LineSegment[]
+): Map<string, string> {
+  if (cells.length === 0) return new Map(cellText)
+
+  // Build cellMap for quick lookup
+  const cellMap = new Map<string, GridCell>()
+  for (const cell of cells) {
+    cellMap.set(`${cell.row}-${cell.col}`, cell)
+  }
+
+  const result = new Map(cellText)
+
+  // Track cells absorbed by a merge (should output '')
+  const absorbed = new Set<string>()
+
+  const maxRow = Math.max(...cells.map((c) => c.row))
+  const maxCol = Math.max(...cells.map((c) => c.col))
+
+  // Horizontal merges: for each row, walk columns left to right
+  for (let r = 0; r <= maxRow; r++) {
+    let spanStart = 0
+    let spanTexts: string[] = []
+    let spanKeys: string[] = []
+
+    const flushSpan = (upToCol: number) => {
+      if (spanKeys.length > 1) {
+        // Merge: join non-empty texts, put in first cell, empty the rest
+        const merged = spanTexts.filter(Boolean).join(' ')
+        result.set(spanKeys[0], merged)
+        for (let i = 1; i < spanKeys.length; i++) {
+          result.set(spanKeys[i], '')
+          absorbed.add(spanKeys[i])
+        }
+      }
+      spanStart = upToCol
+      spanTexts = []
+      spanKeys = []
+    }
+
+    // Seed with first column
+    const firstKey = `${r}-0`
+    if (cellMap.has(firstKey)) {
+      spanKeys.push(firstKey)
+      spanTexts.push(result.get(firstKey) ?? '')
+    }
+
+    for (let c = 1; c <= maxCol; c++) {
+      const key = `${r}-${c}`
+      const cell = cellMap.get(key)
+      const prevCell = cellMap.get(`${r}-${c - 1}`)
+
+      if (!cell || !prevCell) {
+        flushSpan(c)
+        if (cell) {
+          spanKeys.push(key)
+          spanTexts.push(result.get(key) ?? '')
+        }
+        continue
+      }
+
+      // The shared vertical border is at prevCell.right (== cell.left)
+      const borderX = prevCell.right
+      const yTop = Math.max(prevCell.top, cell.top)
+      const yBottom = Math.min(prevCell.bottom, cell.bottom)
+
+      if (hasVerticalBorder(borderX, yTop, yBottom, vLines)) {
+        // Border exists: flush current span, start new one
+        flushSpan(c)
+        spanKeys.push(key)
+        spanTexts.push(result.get(key) ?? '')
+      } else {
+        // No border: extend span
+        spanKeys.push(key)
+        spanTexts.push(result.get(key) ?? '')
+      }
+    }
+    // Flush remaining span
+    flushSpan(maxCol + 1)
+  }
+
+  // Vertical merges: for each column, walk rows top to bottom
+  // Skip cells already absorbed by horizontal merges
+  for (let c = 0; c <= maxCol; c++) {
+    let spanTexts: string[] = []
+    let spanKeys: string[] = []
+
+    const flushSpan = (upToRow: number) => {
+      if (spanKeys.length > 1) {
+        const merged = spanTexts.filter(Boolean).join(' ')
+        result.set(spanKeys[0], merged)
+        for (let i = 1; i < spanKeys.length; i++) {
+          result.set(spanKeys[i], '')
+          absorbed.add(spanKeys[i])
+        }
+      }
+      spanTexts = []
+      spanKeys = []
+    }
+
+    const firstKey = `${0}-${c}`
+    if (cellMap.has(firstKey) && !absorbed.has(firstKey)) {
+      spanKeys.push(firstKey)
+      spanTexts.push(result.get(firstKey) ?? '')
+    }
+
+    for (let r = 1; r <= maxRow; r++) {
+      const key = `${r}-${c}`
+      const cell = cellMap.get(key)
+      const prevCell = cellMap.get(`${r - 1}-${c}`)
+
+      if (!cell || !prevCell) {
+        flushSpan(r)
+        if (cell && !absorbed.has(key)) {
+          spanKeys.push(key)
+          spanTexts.push(result.get(key) ?? '')
+        }
+        continue
+      }
+
+      // Skip if either cell is absorbed by a horizontal merge
+      const prevKey = `${r - 1}-${c}`
+      if (absorbed.has(prevKey) || absorbed.has(key)) {
+        flushSpan(r)
+        if (!absorbed.has(key)) {
+          spanKeys.push(key)
+          spanTexts.push(result.get(key) ?? '')
+        }
+        continue
+      }
+
+      // The shared horizontal border is at prevCell.bottom (== cell.top)
+      const borderY = prevCell.bottom
+      const xLeft = Math.max(prevCell.left, cell.left)
+      const xRight = Math.min(prevCell.right, cell.right)
+
+      if (hasHorizontalBorder(borderY, xLeft, xRight, hLines)) {
+        // Border exists: flush current span, start new one
+        flushSpan(r)
+        spanKeys.push(key)
+        spanTexts.push(result.get(key) ?? '')
+      } else {
+        // No border: extend span
+        spanKeys.push(key)
+        spanTexts.push(result.get(key) ?? '')
+      }
+    }
+    flushSpan(maxRow + 1)
+  }
+
+  return result
+}
+
 /**
  * Orchestrates lattice table extraction for an entire document IR.
  * Groups lines by page, finds intersections, builds grid cells, assigns text,
@@ -379,6 +580,7 @@ export function extractLatticeTables(ir: DocumentIR): {
       if (cells.length < 2) continue
 
       const cellText = assignTextToCells(cells, pageElements)
+      const mergedText = detectMergedCells(cells, cellText, cluster.hLines, cluster.vLines)
 
       const maxRow = Math.max(...cells.map((c) => c.row))
       const maxCol = Math.max(...cells.map((c) => c.col))
@@ -387,7 +589,7 @@ export function extractLatticeTables(ir: DocumentIR): {
       for (let r = 0; r <= maxRow; r++) {
         const row: string[] = []
         for (let c = 0; c <= maxCol; c++) {
-          row.push(cellText.get(`${r}-${c}`) ?? '')
+          row.push(mergedText.get(`${r}-${c}`) ?? '')
         }
         allRows.push(row)
       }
