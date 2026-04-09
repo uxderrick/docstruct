@@ -24,7 +24,7 @@ export async function ocrImage(
   const { data } = await worker.recognize(imageData)
   const elements: TextElement[] = []
 
-  for (const word of data.words) {
+  for (const word of (data as any).words) {
     if (!word.text.trim()) continue
 
     const x = word.bbox.x0 / pageWidth

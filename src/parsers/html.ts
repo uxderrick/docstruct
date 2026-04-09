@@ -4,7 +4,7 @@ import { createTextElement, createDocumentIR, type DocumentIR } from '../ir.js'
 export function parseHtml(input: string | Buffer): DocumentIR {
   const html = typeof input === 'string' ? input : input.toString('utf-8')
   const $ = cheerio.load(html)
-  const elements = []
+  const elements: import('../ir.js').TextElement[] = []
   let yPosition = 0
   const yStep = 0.02
 
