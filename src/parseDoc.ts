@@ -9,6 +9,7 @@ import { parseText } from './parsers/text.js'
 import { parseHtml } from './parsers/html.js'
 import { parseXlsx } from './parsers/xlsx.js'
 import { parseDocx } from './parsers/docx.js'
+import { parsePdf } from './parsers/pdf.js'
 import type { DocumentIR } from './ir.js'
 
 const EXTENSION_MAP: Record<string, SourceType> = {
@@ -61,6 +62,7 @@ async function parseToIR(data: Buffer, sourceType: SourceType): Promise<Document
     case 'docx':
       return parseDocx(data)
     case 'pdf':
+      return parsePdf(data)
     case 'image':
       throw new Error(`Parser for ${sourceType} not yet implemented`)
     default:
