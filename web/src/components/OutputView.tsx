@@ -1,6 +1,9 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 
 type Tab = 'json' | 'csv' | 'markdown'
+
+const FILE_EXT: Record<Tab, string> = { json: '.json', csv: '.csv', markdown: '.md' }
+const MIME_TYPE: Record<Tab, string> = { json: 'application/json', csv: 'text/csv', markdown: 'text/markdown' }
 
 interface OutputViewProps {
   jsonOutput: string
@@ -24,9 +27,21 @@ export function OutputView({ jsonOutput, csvOutput, markdownOutput, isLoading }:
     markdown: markdownOutput,
   }
 
+  const handleDownload = useCallback(() => {
+    const text = content[activeTab]
+    if (!text || text === 'No output yet') return
+    const blob = new Blob([text], { type: MIME_TYPE[activeTab] })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `docstruct-output${FILE_EXT[activeTab]}`
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [activeTab, content])
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      <div style={{ display: 'flex', borderBottom: '1px solid #e5e7eb', padding: '0 0.5rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid #e5e7eb', padding: '0 0.5rem' }}>
         {tabs.map((tab) => (
           <button
             key={tab.key}
@@ -45,6 +60,22 @@ export function OutputView({ jsonOutput, csvOutput, markdownOutput, isLoading }:
             {tab.label}
           </button>
         ))}
+        <button
+          onClick={handleDownload}
+          disabled={!content[activeTab] || content[activeTab] === 'No output yet'}
+          style={{
+            marginLeft: 'auto',
+            padding: '0.375rem 0.75rem',
+            border: '1px solid #d1d5db',
+            borderRadius: '4px',
+            background: 'none',
+            cursor: content[activeTab] && content[activeTab] !== 'No output yet' ? 'pointer' : 'default',
+            color: content[activeTab] && content[activeTab] !== 'No output yet' ? '#374151' : '#d1d5db',
+            fontSize: '0.75rem',
+          }}
+        >
+          Download {FILE_EXT[activeTab]}
+        </button>
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
         {isLoading ? (
