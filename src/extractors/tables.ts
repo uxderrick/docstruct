@@ -103,18 +103,16 @@ function extractTabTables(ir: DocumentIR): { tables: Table[]; claimed: TextEleme
   return { tables, claimed }
 }
 
-function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextElement[] } {
-  const tables: Table[] = []
-  const claimed: TextElement[] = []
-  const unclaimed = ir.elements.filter((el) => !el.claimed)
-
-  if (unclaimed.length < 6) return { tables, claimed }
+function extractSpatialTablesForPage(
+  elements: TextElement[]
+): { tableRows: string[][]; tableElements: TextElement[] } | null {
+  if (elements.length < 4) return null
 
   // Cluster elements by x-position to find columns
   const xTolerance = 0.05
   const xGroups = new Map<number, TextElement[]>()
 
-  for (const el of unclaimed) {
+  for (const el of elements) {
     let foundGroup = false
     for (const [groupX, group] of xGroups) {
       if (Math.abs(el.x - groupX) < xTolerance) {
@@ -128,17 +126,19 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
     }
   }
 
-  // Need at least 2 columns with 3+ elements each
+  // Need at least 2 columns with 2+ elements each
   const columns = Array.from(xGroups.entries())
-    .filter(([, group]) => group.length >= 3)
+    .filter(([, group]) => group.length >= 2)
     .sort(([a], [b]) => a - b)
 
-  if (columns.length < 2) return { tables, claimed }
+  if (columns.length < 2) return null
 
   // Cluster by y-position to form rows
   const yTolerance = 0.02
   const allTableElements = columns.flatMap(([, group]) => group)
   const yValues = [...new Set(allTableElements.map((el) => el.y))].sort((a, b) => a - b)
+
+  if (yValues.length === 0) return null
 
   const yGroups: number[][] = []
   let currentGroup = [yValues[0]]
@@ -153,9 +153,9 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
   }
   yGroups.push(currentGroup)
 
-  if (yGroups.length < 3) return { tables, claimed }
+  if (yGroups.length < 2) return null
 
-  // Build table rows
+  // Build table rows — collect ALL elements per cell, join with space
   const tableRows: string[][] = []
   const tableElements: TextElement[] = []
 
@@ -166,11 +166,14 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
     const rowElements: TextElement[] = []
 
     for (const [colX] of columns) {
-      const cell = allTableElements.find(
+      const cellElements = allTableElements.filter(
         (el) => Math.abs(el.x - colX) < xTolerance && el.y >= yMin - yTolerance && el.y <= yMax + yTolerance
       )
-      row.push(cell ? cell.text.trim() : '')
-      if (cell) rowElements.push(cell)
+      // Sort by y then x so multi-line cell text is in reading order
+      cellElements.sort((a, b) => a.y - b.y || a.x - b.x)
+      const cellText = cellElements.map((el) => el.text.trim()).join(' ').trim()
+      row.push(cellText)
+      rowElements.push(...cellElements)
     }
 
     if (rowElements.length > 0) {
@@ -179,9 +182,79 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
     }
   }
 
-  if (tableRows.length >= 2) {
-    tables.push({ columns: tableRows[0], rows: tableRows.slice(1) })
-    claimed.push(...tableElements)
+  if (tableRows.length < 2) return null
+  return { tableRows, tableElements }
+}
+
+function columnsMatch(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((col, i) => col === b[i])
+}
+
+function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextElement[] } {
+  const tables: Table[] = []
+  const claimed: TextElement[] = []
+  const unclaimed = ir.elements.filter((el) => !el.claimed)
+
+  if (unclaimed.length < 4) return { tables, claimed }
+
+  // Group unclaimed elements by page
+  const byPage = new Map<number, TextElement[]>()
+  for (const el of unclaimed) {
+    const page = el.page ?? 1
+    let group = byPage.get(page)
+    if (!group) {
+      group = []
+      byPage.set(page, group)
+    }
+    group.push(el)
+  }
+
+  // Process each page independently
+  const pageResults: { page: number; tableRows: string[][]; tableElements: TextElement[] }[] = []
+  const sortedPages = [...byPage.keys()].sort((a, b) => a - b)
+
+  for (const page of sortedPages) {
+    const pageElements = byPage.get(page)!
+    const result = extractSpatialTablesForPage(pageElements)
+    if (result) {
+      pageResults.push({ page, ...result })
+    }
+  }
+
+  if (pageResults.length === 0) return { tables, claimed }
+
+  // Merge consecutive page results with the same column structure
+  let currentTable: { columns: string[]; rows: string[][]; elements: TextElement[] } | null = null
+
+  for (const result of pageResults) {
+    const firstRow = result.tableRows[0]
+
+    if (currentTable && currentTable.columns.length === firstRow.length) {
+      // Same number of columns — check if first row is a duplicate header
+      const isHeaderDuplicate = columnsMatch(currentTable.columns, firstRow)
+      const rowsToAdd = isHeaderDuplicate ? result.tableRows.slice(1) : result.tableRows
+      currentTable.rows.push(...rowsToAdd)
+      currentTable.elements.push(...result.tableElements)
+    } else {
+      // Flush previous table
+      if (currentTable && currentTable.rows.length >= 1) {
+        tables.push({ columns: currentTable.columns, rows: currentTable.rows })
+        claimed.push(...currentTable.elements)
+      }
+      // Start new table
+      currentTable = {
+        columns: firstRow,
+        rows: result.tableRows.slice(1),
+        elements: [...result.tableElements],
+      }
+    }
+  }
+
+  // Flush last table
+  if (currentTable && currentTable.rows.length >= 1) {
+    tables.push({ columns: currentTable.columns, rows: currentTable.rows })
+    claimed.push(...currentTable.elements)
   }
 
   return { tables, claimed }

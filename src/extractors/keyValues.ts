@@ -44,11 +44,12 @@ function extractSpatialKeyValues(
   const claimed: TextElement[] = []
 
   const unclaimed = ir.elements.filter((el) => !el.claimed)
+  const yTolerance = 0.01
+
+  // 1. Bold label paired with non-bold value to the right
   const boldElements = unclaimed.filter((el) => el.font?.bold)
 
   for (const boldEl of boldElements) {
-    // Find a non-bold element on the same y-line, to the right
-    const yTolerance = 0.01
     const pair = unclaimed.find(
       (el) =>
         el !== boldEl &&
@@ -62,6 +63,34 @@ function extractSpatialKeyValues(
       const key = boldEl.text.replace(/:$/, '').trim()
       kv[key.toLowerCase()] = pair.text.trim()
       claimed.push(boldEl, pair)
+    }
+  }
+
+  // 2. Non-bold label ending with ":" paired with value to the right on same y-line
+  const LABEL_RE = /^[A-Za-z][A-Za-z0-9 ]{0,40}:$/
+  const labelElements = unclaimed.filter(
+    (el) => !el.claimed && !claimed.includes(el) && LABEL_RE.test(el.text.trim())
+  )
+
+  for (const labelEl of labelElements) {
+    const pair = unclaimed.find(
+      (el) =>
+        el !== labelEl &&
+        !el.claimed &&
+        !claimed.includes(el) &&
+        Math.abs(el.y - labelEl.y) < yTolerance &&
+        el.x > labelEl.x
+    )
+
+    if (pair) {
+      const value = pair.text.trim()
+      // Skip if value is too long (likely a sentence)
+      if (value.length > MAX_VALUE_LENGTH) continue
+      if (value.split(' ').length > 6) continue
+
+      const key = labelEl.text.replace(/:$/, '').trim()
+      kv[key.toLowerCase()] = value
+      claimed.push(labelEl, pair)
     }
   }
 
