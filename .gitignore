@@ -4,3 +4,7 @@ coverage/
 *.tsbuildinfo
 .DS_Store
 *.traineddata
+docs/
+.output/
+.vinxi/
+.nitro/

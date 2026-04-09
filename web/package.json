@@ -3,27 +3,26 @@
   "version": "0.1.0",
   "description": "Companion web app for docstruct — Document Structure Viewer",
   "private": true,
+  "type": "module",
   "scripts": {
-    "dev": "vinxi dev",
-    "build": "vinxi build",
-    "start": "vinxi start"
+    "dev": "vite dev",
+    "build": "vite build",
+    "start": "node .output/server/index.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module",
   "dependencies": {
-    "@tanstack/react-router": "^1.168.10",
-    "@tanstack/start": "^1.120.20",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
-    "vinxi": "^0.5.11"
+    "@tanstack/react-router": "^1.168.7",
+    "@tanstack/react-start": "^1.167.12",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
   },
   "devDependencies": {
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^4.7.0",
+    "@vitejs/plugin-react": "^5.0.0",
     "typescript": "^5.9.3",
-    "vite-tsconfig-paths": "^6.1.1"
+    "vite": "^8.0.0"
   }
 }
