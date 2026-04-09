@@ -103,13 +103,55 @@ function extractTabTables(ir: DocumentIR): { tables: Table[]; claimed: TextEleme
   return { tables, claimed }
 }
 
+// Page header patterns that should be filtered from table data
+const PAGE_HEADER_PATTERNS = [
+  'MOBILE MONEY TRANSACTION HISTORY',
+  'Time Run:',
+  'MSISDN:',
+  'ACCOUNT HOLDER NAME:',
+  'Powered by MTNGH',
+]
+
+function isPageHeaderRow(rowTexts: string[]): boolean {
+  const joined = rowTexts.join(' ')
+  return PAGE_HEADER_PATTERNS.some((pattern) => joined.includes(pattern))
+}
+
+function computeAdaptiveXTolerance(elements: TextElement[]): number {
+  // Collect all unique x-positions and sort them
+  const uniqueXs = [...new Set(elements.map((el) => el.x))].sort((a, b) => a - b)
+
+  if (uniqueXs.length < 2) return 0.03
+
+  // Calculate gaps between adjacent x-positions
+  const gaps: number[] = []
+  for (let i = 1; i < uniqueXs.length; i++) {
+    const gap = uniqueXs[i] - uniqueXs[i - 1]
+    if (gap > 0.001) {
+      gaps.push(gap)
+    }
+  }
+
+  if (gaps.length === 0) return 0.03
+
+  // Use median gap to determine tolerance
+  gaps.sort((a, b) => a - b)
+  const medianGap = gaps[Math.floor(gaps.length / 2)]
+  const tolerance = medianGap * 0.4
+
+  // Clamp between 0.005 and 0.03
+  return Math.max(0.005, Math.min(0.03, tolerance))
+}
+
 function extractSpatialTablesForPage(
   elements: TextElement[]
 ): { tableRows: string[][]; tableElements: TextElement[] } | null {
   if (elements.length < 4) return null
 
+  // Compute adaptive x-tolerance based on density of distinct x-positions
+  const xTolerance = computeAdaptiveXTolerance(elements)
+
   // Cluster elements by x-position to find columns
-  const xTolerance = 0.05
   const xGroups = new Map<number, TextElement[]>()
 
   for (const el of elements) {
@@ -158,6 +200,7 @@ function extractSpatialTablesForPage(
   // Build table rows — collect ALL elements per cell, join with space
   const tableRows: string[][] = []
   const tableElements: TextElement[] = []
+  const headerElements: TextElement[] = []
 
   for (const yGroup of yGroups) {
     const yMin = Math.min(...yGroup)
@@ -177,10 +220,18 @@ function extractSpatialTablesForPage(
     }
 
     if (rowElements.length > 0) {
-      tableRows.push(row)
-      tableElements.push(...rowElements)
+      // Filter out page header rows but still claim their elements
+      if (isPageHeaderRow(row)) {
+        headerElements.push(...rowElements)
+      } else {
+        tableRows.push(row)
+        tableElements.push(...rowElements)
+      }
     }
   }
+
+  // Include header elements in tableElements so they get claimed (not emitted as paragraphs)
+  tableElements.push(...headerElements)
 
   if (tableRows.length < 2) return null
   return { tableRows, tableElements }
@@ -189,6 +240,41 @@ function extractSpatialTablesForPage(
 function columnsMatch(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false
   return a.every((col, i) => col === b[i])
+}
+
+/**
+ * Check if two column sets are compatible for merging across pages.
+ * Returns the "wider" column set if the smaller is a subset (by position),
+ * or null if they're incompatible.
+ */
+function compatibleColumns(a: string[], b: string[]): string[] | null {
+  // Exact match
+  if (columnsMatch(a, b)) return a
+
+  // Allow difference of up to 2 columns
+  if (Math.abs(a.length - b.length) > 2) return null
+
+  const wider = a.length >= b.length ? a : b
+  const narrower = a.length < b.length ? a : b
+
+  // Check if narrower columns are a positional subset of wider columns
+  // (i.e., narrower[i] matches wider[i] for all i, or narrower columns
+  // appear somewhere in wider in order)
+  let wi = 0
+  let ni = 0
+  while (ni < narrower.length && wi < wider.length) {
+    if (narrower[ni] === wider[wi]) {
+      ni++
+    }
+    wi++
+  }
+
+  if (ni === narrower.length) return wider
+
+  // Also try: narrower columns match the first N columns of wider
+  if (narrower.every((col, i) => col === wider[i])) return wider
+
+  return null
 }
 
 function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextElement[] } {
@@ -224,30 +310,58 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
 
   if (pageResults.length === 0) return { tables, claimed }
 
-  // Merge consecutive page results with the same column structure
+  // Merge consecutive page results with compatible column structures
   let currentTable: { columns: string[]; rows: string[][]; elements: TextElement[] } | null = null
 
   for (const result of pageResults) {
     const firstRow = result.tableRows[0]
 
-    if (currentTable && currentTable.columns.length === firstRow.length) {
-      // Same number of columns — check if first row is a duplicate header
-      const isHeaderDuplicate = columnsMatch(currentTable.columns, firstRow)
-      const rowsToAdd = isHeaderDuplicate ? result.tableRows.slice(1) : result.tableRows
-      currentTable.rows.push(...rowsToAdd)
-      currentTable.elements.push(...result.tableElements)
-    } else {
-      // Flush previous table
-      if (currentTable && currentTable.rows.length >= 1) {
-        tables.push({ columns: currentTable.columns, rows: currentTable.rows })
-        claimed.push(...currentTable.elements)
+    if (currentTable) {
+      const mergedColumns = compatibleColumns(currentTable.columns, firstRow)
+
+      if (mergedColumns) {
+        // Update columns to the wider set if needed
+        const targetColCount = mergedColumns.length
+        currentTable.columns = mergedColumns
+
+        // Pad existing rows if the column count grew
+        if (currentTable.rows.length > 0 && currentTable.rows[0].length < targetColCount) {
+          currentTable.rows = currentTable.rows.map((row) => {
+            while (row.length < targetColCount) row.push('')
+            return row
+          })
+        }
+
+        // Check if first row is a duplicate header
+        const isHeaderDuplicate = columnsMatch(mergedColumns, firstRow)
+        let rowsToAdd = isHeaderDuplicate ? result.tableRows.slice(1) : result.tableRows
+
+        // Pad new rows if needed
+        rowsToAdd = rowsToAdd.map((row) => {
+          if (row.length < targetColCount) {
+            const padded = [...row]
+            while (padded.length < targetColCount) padded.push('')
+            return padded
+          }
+          return row
+        })
+
+        currentTable.rows.push(...rowsToAdd)
+        currentTable.elements.push(...result.tableElements)
+        continue
       }
-      // Start new table
-      currentTable = {
-        columns: firstRow,
-        rows: result.tableRows.slice(1),
-        elements: [...result.tableElements],
-      }
+    }
+
+    // Flush previous table
+    if (currentTable && currentTable.rows.length >= 1) {
+      tables.push({ columns: currentTable.columns, rows: currentTable.rows })
+      claimed.push(...currentTable.elements)
+    }
+    // Start new table
+    currentTable = {
+      columns: firstRow,
+      rows: result.tableRows.slice(1),
+      elements: [...result.tableElements],
     }
   }
 
