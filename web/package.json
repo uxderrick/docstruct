@@ -1,0 +1,29 @@
+{
+  "name": "docstruct-web",
+  "version": "0.1.0",
+  "description": "Companion web app for docstruct — Document Structure Viewer",
+  "private": true,
+  "scripts": {
+    "dev": "vinxi dev",
+    "build": "vinxi build",
+    "start": "vinxi start"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "@tanstack/react-router": "^1.168.10",
+    "@tanstack/start": "^1.120.20",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "vinxi": "^0.5.11"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4.7.0",
+    "typescript": "^5.9.3",
+    "vite-tsconfig-paths": "^6.1.1"
+  }
+}
