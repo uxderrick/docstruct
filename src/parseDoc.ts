@@ -8,6 +8,7 @@ import { formatMarkdown } from './formatters/markdown.js'
 import { parseText } from './parsers/text.js'
 import { parseHtml } from './parsers/html.js'
 import { parseXlsx } from './parsers/xlsx.js'
+import { parseDocx } from './parsers/docx.js'
 import type { DocumentIR } from './ir.js'
 
 const EXTENSION_MAP: Record<string, SourceType> = {
@@ -57,9 +58,10 @@ async function parseToIR(data: Buffer, sourceType: SourceType): Promise<Document
       return parseHtml(data)
     case 'xlsx':
       return parseXlsx(data)
+    case 'docx':
+      return parseDocx(data)
     case 'pdf':
     case 'image':
-    case 'docx':
       throw new Error(`Parser for ${sourceType} not yet implemented`)
     default:
       throw new Error(`Unknown source type: ${sourceType}`)
