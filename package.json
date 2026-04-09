@@ -1,6 +1,10 @@
 {
   "name": "docstruct",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "files": [
+    "dist",
+    "package.json"
+  ],
   "description": "Offline, rule-based document parser for AI pipelines",
   "type": "module",
   "main": "./dist/index.js",
