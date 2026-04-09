@@ -27,6 +27,18 @@ export function OutputView({ jsonOutput, csvOutput, markdownOutput, isLoading }:
     markdown: markdownOutput,
   }
 
+  const [copied, setCopied] = useState(false)
+
+  const hasOutput = content[activeTab] && content[activeTab] !== 'No output yet'
+
+  const handleCopy = useCallback(async () => {
+    const text = content[activeTab]
+    if (!text || text === 'No output yet') return
+    await navigator.clipboard.writeText(text)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }, [activeTab, content])
+
   const handleDownload = useCallback(() => {
     const text = content[activeTab]
     if (!text || text === 'No output yet') return
@@ -60,22 +72,41 @@ export function OutputView({ jsonOutput, csvOutput, markdownOutput, isLoading }:
             {tab.label}
           </button>
         ))}
-        <button
-          onClick={handleDownload}
-          disabled={!content[activeTab] || content[activeTab] === 'No output yet'}
-          style={{
-            marginLeft: 'auto',
-            padding: '0.375rem 0.75rem',
-            border: '1px solid #d1d5db',
-            borderRadius: '4px',
-            background: 'none',
-            cursor: content[activeTab] && content[activeTab] !== 'No output yet' ? 'pointer' : 'default',
-            color: content[activeTab] && content[activeTab] !== 'No output yet' ? '#374151' : '#d1d5db',
-            fontSize: '0.75rem',
-          }}
-        >
-          Download {FILE_EXT[activeTab]}
-        </button>
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
+          <button
+            onClick={handleCopy}
+            disabled={!hasOutput}
+            title="Copy to clipboard"
+            style={{
+              padding: '0.375rem 0.5rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '4px',
+              background: copied ? '#dcfce7' : 'none',
+              cursor: hasOutput ? 'pointer' : 'default',
+              color: copied ? '#16a34a' : hasOutput ? '#374151' : '#d1d5db',
+              fontSize: '0.75rem',
+              transition: 'all 150ms ease',
+            }}
+          >
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+          <button
+            onClick={handleDownload}
+            disabled={!hasOutput}
+            title="Download file"
+            style={{
+              padding: '0.375rem 0.75rem',
+              border: '1px solid #d1d5db',
+              borderRadius: '4px',
+              background: 'none',
+              cursor: hasOutput ? 'pointer' : 'default',
+              color: hasOutput ? '#374151' : '#d1d5db',
+              fontSize: '0.75rem',
+            }}
+          >
+            Download {FILE_EXT[activeTab]}
+          </button>
+        </div>
       </div>
       <div style={{ flex: 1, overflow: 'auto', padding: '1rem' }}>
         {isLoading ? (
