@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findIntersections, buildGridCells, assignTextToCells } from '../../src/extractors/lattice.js'
+import { findIntersections, buildGridCells, assignTextToCells, deduplicateLines } from '../../src/extractors/lattice.js'
 import { createTextElement, type LineSegment } from '../../src/ir.js'
 
 describe('findIntersections', () => {
@@ -69,5 +69,81 @@ describe('assignTextToCells', () => {
     ]
     const result = assignTextToCells(cells, elements)
     expect(result.get('0-0')).toBe('First Second')
+  })
+})
+
+describe('deduplicateLines', () => {
+  it('merges identical horizontal lines', () => {
+    const lines: LineSegment[] = [
+      { x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const result = deduplicateLines(lines)
+    expect(result).toHaveLength(1)
+    expect(result[0].x1).toBeCloseTo(0.1)
+    expect(result[0].x2).toBeCloseTo(0.9)
+  })
+
+  it('merges overlapping horizontal lines at the same y', () => {
+    const lines: LineSegment[] = [
+      { x1: 0.1, y1: 0.3, x2: 0.5, y2: 0.3, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.4, y1: 0.3, x2: 0.9, y2: 0.3, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const result = deduplicateLines(lines)
+    expect(result).toHaveLength(1)
+    expect(result[0].x1).toBeCloseTo(0.1)
+    expect(result[0].x2).toBeCloseTo(0.9)
+  })
+
+  it('merges adjacent horizontal lines within tolerance', () => {
+    const lines: LineSegment[] = [
+      { x1: 0.1, y1: 0.2, x2: 0.5, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.502, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const result = deduplicateLines(lines)
+    expect(result).toHaveLength(1)
+    expect(result[0].x1).toBeCloseTo(0.1)
+    expect(result[0].x2).toBeCloseTo(0.9)
+  })
+
+  it('keeps non-overlapping horizontal lines separate', () => {
+    const lines: LineSegment[] = [
+      { x1: 0.1, y1: 0.2, x2: 0.4, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.6, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const result = deduplicateLines(lines)
+    expect(result).toHaveLength(2)
+  })
+
+  it('merges identical vertical lines', () => {
+    const lines: LineSegment[] = [
+      { x1: 0.3, y1: 0.1, x2: 0.3, y2: 0.8, lineWidth: 1, page: 1, orientation: 'vertical' },
+      { x1: 0.3, y1: 0.1, x2: 0.3, y2: 0.8, lineWidth: 1, page: 1, orientation: 'vertical' },
+    ]
+    const result = deduplicateLines(lines)
+    expect(result).toHaveLength(1)
+  })
+
+  it('merges lines at nearly the same y (within snap tolerance)', () => {
+    const lines: LineSegment[] = [
+      { x1: 0.1, y1: 0.200, x2: 0.9, y2: 0.200, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.202, x2: 0.9, y2: 0.202, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const result = deduplicateLines(lines)
+    expect(result).toHaveLength(1)
+  })
+
+  it('keeps the wider lineWidth when merging', () => {
+    const lines: LineSegment[] = [
+      { x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 3, page: 1, orientation: 'horizontal' },
+    ]
+    const result = deduplicateLines(lines)
+    expect(result).toHaveLength(1)
+    expect(result[0].lineWidth).toBe(3)
+  })
+
+  it('returns empty array for empty input', () => {
+    expect(deduplicateLines([])).toHaveLength(0)
   })
 })

@@ -19,6 +19,69 @@ interface GridCell {
 }
 
 /**
+ * Merge overlapping or identical line segments.
+ * Groups lines by their fixed-axis coordinate (y for horizontal, x for vertical),
+ * then merges overlapping/adjacent segments along the varying axis.
+ */
+export function deduplicateLines(lines: LineSegment[]): LineSegment[] {
+  if (lines.length === 0) return []
+
+  const orientation = lines[0].orientation
+
+  // Group by fixed axis: y for horizontal, x for vertical
+  const groups = new Map<number, LineSegment[]>()
+  for (const line of lines) {
+    const fixedVal = orientation === 'horizontal' ? line.y1 : line.x1
+    let groupKey: number | null = null
+    for (const key of groups.keys()) {
+      if (Math.abs(fixedVal - key) <= SNAP_TOLERANCE) {
+        groupKey = key
+        break
+      }
+    }
+    if (groupKey === null) {
+      groupKey = fixedVal
+      groups.set(groupKey, [])
+    }
+    groups.get(groupKey)!.push(line)
+  }
+
+  const result: LineSegment[] = []
+
+  for (const [fixedVal, group] of groups) {
+    if (orientation === 'horizontal') {
+      group.sort((a, b) => a.x1 - b.x1)
+    } else {
+      group.sort((a, b) => a.y1 - b.y1)
+    }
+
+    let current = { ...group[0] }
+
+    for (let i = 1; i < group.length; i++) {
+      const next = group[i]
+      const currentEnd = orientation === 'horizontal' ? current.x2 : current.y2
+      const nextStart = orientation === 'horizontal' ? next.x1 : next.y1
+
+      if (nextStart <= currentEnd + SNAP_TOLERANCE) {
+        if (orientation === 'horizontal') {
+          current.x2 = Math.max(current.x2, next.x2)
+        } else {
+          current.y2 = Math.max(current.y2, next.y2)
+        }
+        current.lineWidth = Math.max(current.lineWidth, next.lineWidth)
+      } else {
+        result.push(current)
+        current = { ...next }
+      }
+    }
+
+    result.push(current)
+  }
+
+  return result
+}
+
+/**
  * Find all intersection points between horizontal and vertical line segments.
  * A crossing occurs when the vertical line's x falls within the horizontal line's
  * x-range AND the horizontal line's y falls within the vertical line's y-range.
@@ -218,7 +281,11 @@ export function extractLatticeTables(ir: DocumentIR): {
     // Skip pages with insufficient lines for a grid
     if (hLines.length < 2 || vLines.length < 2) continue
 
-    const points = findIntersections(hLines, vLines)
+    // Merge overlapping/duplicate lines before intersection detection
+    const dedupH = deduplicateLines(hLines)
+    const dedupV = deduplicateLines(vLines)
+
+    const points = findIntersections(dedupH, dedupV)
     if (points.length === 0) continue
 
     const cells = buildGridCells(points)
