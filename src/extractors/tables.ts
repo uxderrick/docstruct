@@ -252,6 +252,30 @@ function extractSpatialTablesForPage(
   }
 
   if (tableRows.length < 2) return null
+
+  // Quality filter: reject false-positive tables
+  // A real table has content distributed across columns.
+  // Body text masquerading as a table has most cells empty.
+  const totalCells = tableRows.length * columns.length
+  let nonEmptyCells = 0
+  for (const row of tableRows) {
+    for (const cell of row) {
+      if (cell.trim()) nonEmptyCells++
+    }
+  }
+  const fillRatio = nonEmptyCells / totalCells
+
+  // If less than 40% of cells have content, it's likely not a table
+  if (fillRatio < 0.4) return null
+
+  // If most rows have content in only 1 column, it's paragraph text not a table
+  let singleColumnRows = 0
+  for (const row of tableRows) {
+    const filledCols = row.filter((c) => c.trim()).length
+    if (filledCols <= 1) singleColumnRows++
+  }
+  if (singleColumnRows / tableRows.length > 0.6) return null
+
   return { tableRows, tableElements }
 }
 
@@ -342,6 +366,7 @@ function extractSpatialTables(ir: DocumentIR): { tables: Table[]; claimed: TextE
   let currentTable: { columns: string[]; rows: string[][]; elements: TextElement[] } | null = null
 
   for (const result of pageResults) {
+    if (result.tableRows.length === 0) continue
     const firstRow = result.tableRows[0]
 
     if (currentTable) {
