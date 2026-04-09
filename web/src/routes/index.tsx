@@ -4,6 +4,7 @@ import { FileDropZone } from '../components/FileDropZone'
 import { DocumentPreview } from '../components/DocumentPreview'
 import { OutputView } from '../components/OutputView'
 import { WarningsBar } from '../components/WarningsBar'
+import { parseDocument } from '../server/parseDocument'
 
 export const Route = createFileRoute('/')({
   component: Home,
@@ -28,38 +29,29 @@ function Home() {
 
     setIsLoading(true)
     try {
-      const text = await selectedFile.text()
+      // Read file as base64 and send to server function
+      const arrayBuffer = await selectedFile.arrayBuffer()
+      const base64 = btoa(
+        new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      )
 
-      // For V1: client-side processing for text files only
-      // Full docstruct integration requires a server-side API route
-      const ext = selectedFile.name.split('.').pop()?.toLowerCase()
+      const result = await parseDocument({
+        data: { data: base64, fileName: selectedFile.name },
+      })
 
-      if (ext === 'txt' || ext === 'html' || ext === 'htm') {
-        // Simple client-side display of file content
-        setJsonOutput(JSON.stringify({
-          message: 'Client-side parsing - use the docstruct CLI for full extraction',
-          fileType: ext,
-          contentPreview: text.substring(0, 2000)
-        }, null, 2))
-        setCsvOutput(`File: ${selectedFile.name}\nType: ${ext}\n\n${text.substring(0, 2000)}`)
-        setMarkdownOutput(`# ${selectedFile.name}\n\n**Type:** ${ext}\n\n\`\`\`\n${text.substring(0, 2000)}\n\`\`\``)
-        setWarnings([])
-        setMetadata({ sourceType: ext, pages: 1, extractionMethod: 'text' })
-      } else {
-        setJsonOutput(JSON.stringify({
-          message: `${ext} files require server-side processing with docstruct`,
-          suggestion: 'Use parseDoc() from the docstruct package directly'
-        }, null, 2))
-        setCsvOutput('')
-        setMarkdownOutput('')
-        setWarnings([`${ext} format requires Node.js environment for full parsing`])
-        setMetadata({ sourceType: ext ?? 'unknown' })
-      }
+      setJsonOutput(JSON.stringify(result.json, null, 2))
+      setCsvOutput(result.csv)
+      setMarkdownOutput(result.markdown)
+
+      const parsed = result.json as Record<string, unknown>
+      setWarnings((parsed.warnings as string[]) ?? [])
+      setMetadata((parsed.metadata as Record<string, unknown>) ?? null)
     } catch (err) {
       setJsonOutput(`Error: ${err instanceof Error ? err.message : String(err)}`)
       setCsvOutput('')
       setMarkdownOutput('')
       setWarnings([`Parse error: ${err instanceof Error ? err.message : String(err)}`])
+      setMetadata(null)
     } finally {
       setIsLoading(false)
     }
