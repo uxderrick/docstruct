@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findIntersections, buildGridCells, assignTextToCells, deduplicateLines } from '../../src/extractors/lattice.js'
+import { findIntersections, buildGridCells, assignTextToCells, deduplicateLines, clusterLines } from '../../src/extractors/lattice.js'
 import { createTextElement, type LineSegment } from '../../src/ir.js'
 
 describe('findIntersections', () => {
@@ -145,5 +145,79 @@ describe('deduplicateLines', () => {
 
   it('returns empty array for empty input', () => {
     expect(deduplicateLines([])).toHaveLength(0)
+  })
+})
+
+describe('clusterLines', () => {
+  it('returns one cluster when all lines form a single table', () => {
+    const hLines: LineSegment[] = [
+      { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.1, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.15, x2: 0.9, y2: 0.15, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const vLines: LineSegment[] = [
+      { x1: 0.1, y1: 0.1, x2: 0.1, y2: 0.2, lineWidth: 1, page: 1, orientation: 'vertical' },
+      { x1: 0.9, y1: 0.1, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'vertical' },
+    ]
+    const clusters = clusterLines(hLines, vLines)
+    expect(clusters).toHaveLength(1)
+    expect(clusters[0].hLines).toHaveLength(3)
+    expect(clusters[0].vLines).toHaveLength(2)
+  })
+
+  it('splits into two clusters when there is a large gap', () => {
+    const hLines: LineSegment[] = [
+      { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.1, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.15, x2: 0.9, y2: 0.15, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.6, x2: 0.9, y2: 0.6, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.65, x2: 0.9, y2: 0.65, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.7, x2: 0.9, y2: 0.7, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const vLines: LineSegment[] = [
+      { x1: 0.1, y1: 0.1, x2: 0.1, y2: 0.2, lineWidth: 1, page: 1, orientation: 'vertical' },
+      { x1: 0.9, y1: 0.1, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'vertical' },
+      { x1: 0.1, y1: 0.6, x2: 0.1, y2: 0.7, lineWidth: 1, page: 1, orientation: 'vertical' },
+      { x1: 0.9, y1: 0.6, x2: 0.9, y2: 0.7, lineWidth: 1, page: 1, orientation: 'vertical' },
+    ]
+    const clusters = clusterLines(hLines, vLines)
+    expect(clusters).toHaveLength(2)
+    expect(clusters[0].hLines).toHaveLength(3)
+    expect(clusters[0].vLines).toHaveLength(2)
+    expect(clusters[1].hLines).toHaveLength(3)
+    expect(clusters[1].vLines).toHaveLength(2)
+  })
+
+  it('assigns vertical lines spanning both clusters to each cluster they overlap', () => {
+    const hLines: LineSegment[] = [
+      { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.1, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.2, x2: 0.9, y2: 0.2, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.7, x2: 0.9, y2: 0.7, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.8, x2: 0.9, y2: 0.8, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const vLines: LineSegment[] = [
+      { x1: 0.5, y1: 0.05, x2: 0.5, y2: 0.85, lineWidth: 1, page: 1, orientation: 'vertical' },
+    ]
+    const clusters = clusterLines(hLines, vLines)
+    expect(clusters).toHaveLength(2)
+    expect(clusters[0].vLines).toHaveLength(1)
+    expect(clusters[1].vLines).toHaveLength(1)
+  })
+
+  it('returns one cluster for only two horizontal lines', () => {
+    const hLines: LineSegment[] = [
+      { x1: 0.1, y1: 0.1, x2: 0.9, y2: 0.1, lineWidth: 1, page: 1, orientation: 'horizontal' },
+      { x1: 0.1, y1: 0.5, x2: 0.9, y2: 0.5, lineWidth: 1, page: 1, orientation: 'horizontal' },
+    ]
+    const vLines: LineSegment[] = [
+      { x1: 0.1, y1: 0.1, x2: 0.1, y2: 0.5, lineWidth: 1, page: 1, orientation: 'vertical' },
+    ]
+    const clusters = clusterLines(hLines, vLines)
+    expect(clusters).toHaveLength(1)
+  })
+
+  it('returns empty array for empty input', () => {
+    const clusters = clusterLines([], [])
+    expect(clusters).toHaveLength(0)
   })
 })

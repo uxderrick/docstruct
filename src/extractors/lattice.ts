@@ -81,6 +81,85 @@ export function deduplicateLines(lines: LineSegment[]): LineSegment[] {
   return result
 }
 
+interface LineCluster {
+  hLines: LineSegment[]
+  vLines: LineSegment[]
+}
+
+/**
+ * Split horizontal and vertical lines into independent table clusters.
+ * Groups by finding large gaps in the y-coordinates of horizontal lines.
+ * A gap > 3x the median gap indicates a table boundary.
+ * Vertical lines are assigned to each cluster whose y-range they overlap.
+ */
+export function clusterLines(
+  hLines: LineSegment[],
+  vLines: LineSegment[]
+): LineCluster[] {
+  if (hLines.length === 0) return []
+
+  const ys = uniqueSnapped(
+    hLines.map((l) => l.y1),
+    SNAP_TOLERANCE
+  )
+
+  if (ys.length < 2) return [{ hLines, vLines }]
+
+  const gaps: { index: number; size: number }[] = []
+  for (let i = 1; i < ys.length; i++) {
+    gaps.push({ index: i, size: ys[i] - ys[i - 1] })
+  }
+
+  if (gaps.length < 2) return [{ hLines, vLines }]
+
+  const sortedGaps = [...gaps].sort((a, b) => a.size - b.size)
+  const medianGap = sortedGaps[Math.floor(sortedGaps.length / 2)].size
+
+  const splitIndices: number[] = []
+  for (const gap of gaps) {
+    if (gap.size > medianGap * 3) {
+      splitIndices.push(gap.index)
+    }
+  }
+
+  if (splitIndices.length === 0) return [{ hLines, vLines }]
+
+  const ranges: { yMin: number; yMax: number }[] = []
+  let start = 0
+  for (const splitIdx of splitIndices) {
+    ranges.push({ yMin: ys[start], yMax: ys[splitIdx - 1] })
+    start = splitIdx
+  }
+  ranges.push({ yMin: ys[start], yMax: ys[ys.length - 1] })
+
+  const clusters: LineCluster[] = ranges.map(() => ({ hLines: [], vLines: [] }))
+
+  for (const h of hLines) {
+    for (let i = 0; i < ranges.length; i++) {
+      if (h.y1 >= ranges[i].yMin - SNAP_TOLERANCE && h.y1 <= ranges[i].yMax + SNAP_TOLERANCE) {
+        clusters[i].hLines.push(h)
+        break
+      }
+    }
+  }
+
+  for (const v of vLines) {
+    const vYMin = Math.min(v.y1, v.y2)
+    const vYMax = Math.max(v.y1, v.y2)
+
+    for (let i = 0; i < ranges.length; i++) {
+      const overlaps =
+        vYMin <= ranges[i].yMax + SNAP_TOLERANCE &&
+        vYMax >= ranges[i].yMin - SNAP_TOLERANCE
+      if (overlaps) {
+        clusters[i].vLines.push(v)
+      }
+    }
+  }
+
+  return clusters
+}
+
 /**
  * Find all intersection points between horizontal and vertical line segments.
  * A crossing occurs when the vertical line's x falls within the horizontal line's
@@ -285,46 +364,51 @@ export function extractLatticeTables(ir: DocumentIR): {
     const dedupH = deduplicateLines(hLines)
     const dedupV = deduplicateLines(vLines)
 
-    const points = findIntersections(dedupH, dedupV)
-    if (points.length === 0) continue
-
-    const cells = buildGridCells(points)
-    if (cells.length < 2) continue
+    // Cluster lines into independent table groups
+    const clusters = clusterLines(dedupH, dedupV)
 
     const pageElements = elementsByPage.get(page) ?? []
-    const cellText = assignTextToCells(cells, pageElements)
 
-    // Determine grid dimensions
-    const maxRow = Math.max(...cells.map((c) => c.row))
-    const maxCol = Math.max(...cells.map((c) => c.col))
+    for (const cluster of clusters) {
+      if (cluster.hLines.length < 2 || cluster.vLines.length < 2) continue
 
-    // Build rows: row 0 = columns, rows 1+ = data
-    const allRows: string[][] = []
-    for (let r = 0; r <= maxRow; r++) {
-      const row: string[] = []
-      for (let c = 0; c <= maxCol; c++) {
-        row.push(cellText.get(`${r}-${c}`) ?? '')
+      const points = findIntersections(cluster.hLines, cluster.vLines)
+      if (points.length === 0) continue
+
+      const cells = buildGridCells(points)
+      if (cells.length < 2) continue
+
+      const cellText = assignTextToCells(cells, pageElements)
+
+      const maxRow = Math.max(...cells.map((c) => c.row))
+      const maxCol = Math.max(...cells.map((c) => c.col))
+
+      const allRows: string[][] = []
+      for (let r = 0; r <= maxRow; r++) {
+        const row: string[] = []
+        for (let c = 0; c <= maxCol; c++) {
+          row.push(cellText.get(`${r}-${c}`) ?? '')
+        }
+        allRows.push(row)
       }
-      allRows.push(row)
+
+      if (allRows.length < 1) continue
+
+      const columns = allRows[0]
+      const rows = allRows.slice(1)
+
+      tables.push({ columns, rows })
+
+      const claimedOnPage = pageElements.filter((el) => {
+        const cx = el.x + el.width / 2
+        const cy = el.y + el.height / 2
+        return cells.some(
+          (cell) =>
+            cx >= cell.left && cx <= cell.right && cy >= cell.top && cy <= cell.bottom
+        )
+      })
+      claimed.push(...claimedOnPage)
     }
-
-    if (allRows.length < 1) continue
-
-    const columns = allRows[0]
-    const rows = allRows.slice(1)
-
-    tables.push({ columns, rows })
-
-    // Claim the elements that fell inside grid cells
-    const claimedOnPage = pageElements.filter((el) => {
-      const cx = el.x + el.width / 2
-      const cy = el.y + el.height / 2
-      return cells.some(
-        (cell) =>
-          cx >= cell.left && cx <= cell.right && cy >= cell.top && cy <= cell.bottom
-      )
-    })
-    claimed.push(...claimedOnPage)
   }
 
   claimElements(claimed)
